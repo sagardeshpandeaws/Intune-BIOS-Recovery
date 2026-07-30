@@ -1,5 +1,8 @@
+param([string]$BiosPassword = '')
+
 $logFile = "$env:TEMP\BIOSRecovery_Remediate.log"
 function Log { param([string]$m) $t = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'; "$t $m" | Out-File $logFile -Append; Write-Host "$t $m" }
+function LogSecret { Log 'BIOS password provided — authenticating BIOS changes' }
 
 $cs = Get-CimInstance Win32_ComputerSystem
 $mfr = $cs.Manufacturer.Trim()
@@ -14,6 +17,13 @@ switch -Wildcard ($mfr) {
 }
 
 if ($oem -eq 'Unknown') { exit 0 }
+
+# Try registry fallback if no password passed
+if (-not $BiosPassword) {
+    $regPath = 'HKLM:\SOFTWARE\IntuneBIOSRecovery'
+    $regVal = Get-ItemProperty -Path $regPath -Name 'BiosPassword' -EA 0
+    if ($regVal -and $regVal.BiosPassword) { $BiosPassword = $regVal.BiosPassword }
+}
 
 function AppInstalled {
     param($oem)
@@ -42,7 +52,7 @@ if (($output -join '') -match 'Windows RE status.*Enabled') {
     if ($LASTEXITCODE -eq 0) { Log 'WinRE enabled' } else { Log 'WinRE enable failed' }
 }
 
-# ── BIOS settings (modules deployed by Phase 2) ──
+# ── BIOS settings ──
 $biosPasswordLock = $false
 
 switch ($oem) {
@@ -54,7 +64,20 @@ switch ($oem) {
             Import-Module DellBIOSProvider -Force -EA Stop
             $pwSet = Get-Item 'DellSmbios:\Security\IsAdminPasswordSet' -EA 0
             if ($pwSet -and $pwSet.CurrentValue -eq 'Yes') { $biosPasswordLock = $true }
-            if (-not $biosPasswordLock) {
+
+            if ($biosPasswordLock -and -not $BiosPassword) {
+                Log 'BIOS password is set but no password provided — skipping BIOS config. Pass -BiosPassword or set HKLM\SOFTWARE\IntuneBIOSRecovery\BiosPassword.'
+            } elseif ($biosPasswordLock -and $BiosPassword) {
+                LogSecret
+                'SupportAssistSystemResolution\BiosConnect', 'SupportAssistSystemResolution\SupportAssistOSRecovery' | ForEach-Object {
+                    $fp = "DellSmbios:\$_"
+                    $cur = Get-Item $fp -EA Stop
+                    if ($cur.CurrentValue -ne 'Enabled') {
+                        Set-Item $fp -Value 'Enabled' -Password $BiosPassword -EA Stop
+                        Log "Dell BIOS: $_ = Enabled"
+                    } else { Log "Dell BIOS: $_ already Enabled" }
+                }
+            } elseif (-not $biosPasswordLock) {
                 'SupportAssistSystemResolution\BiosConnect', 'SupportAssistSystemResolution\SupportAssistOSRecovery' | ForEach-Object {
                     $fp = "DellSmbios:\$_"
                     $cur = Get-Item $fp -EA Stop
@@ -76,7 +99,19 @@ switch ($oem) {
                 $pwSet = Get-HPBIOSSetting -Name 'Setup Password' -EA Stop
                 if ($pwSet.Value -eq 'Set') { $biosPasswordLock = $true }
             } catch { $biosPasswordLock = $false }
-            if (-not $biosPasswordLock) {
+
+            if ($biosPasswordLock -and -not $BiosPassword) {
+                Log 'BIOS password is set but no password provided — skipping BIOS config. Pass -BiosPassword or set HKLM\SOFTWARE\IntuneBIOSRecovery\BiosPassword.'
+            } elseif ($biosPasswordLock -and $BiosPassword) {
+                LogSecret
+                'HP Cloud Recovery', 'Recovery Manager Boot' | ForEach-Object {
+                    $cur = Get-HPBIOSSetting -Name $_ -EA Stop
+                    if ($cur.Value -ne 'Enabled') {
+                        Set-HPBIOSSetting -Name $_ -Value 'Enabled' -Password $BiosPassword -EA Stop
+                        Log "HP BIOS: $_ = Enabled"
+                    } else { Log "HP BIOS: $_ already Enabled" }
+                }
+            } elseif (-not $biosPasswordLock) {
                 'HP Cloud Recovery', 'Recovery Manager Boot' | ForEach-Object {
                     $cur = Get-HPBIOSSetting -Name $_ -EA Stop
                     if ($cur.Value -ne 'Enabled') {
@@ -91,7 +126,22 @@ switch ($oem) {
     'Lenovo' {
         $pwSet = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like 'IsAdminPasswordSet%'" -EA 0
         if ($pwSet -and $pwSet.CurrentSetting -match 'IsAdminPasswordSet=Yes') { $biosPasswordLock = $true }
-        if (-not $biosPasswordLock) {
+
+        if ($biosPasswordLock -and -not $BiosPassword) {
+            Log 'BIOS password is set but no password provided — skipping BIOS config. Pass -BiosPassword or set HKLM\SOFTWARE\IntuneBIOSRecovery\BiosPassword.'
+        } elseif ($biosPasswordLock -and $BiosPassword) {
+            LogSecret
+            'RecoveryBoot=Enable', 'BootToCloud=Enable' | ForEach-Object {
+                $n = $_.Split('=')[0]
+                $cur = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like '$n%'" -EA 0
+                if (-not $cur -or $cur.CurrentSetting -ne $_) {
+                    $settingWithPw = "$_,password,$BiosPassword"
+                    Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SetBiosSetting -Arguments @{ Setting = $settingWithPw } -EA Stop | Out-Null
+                    Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SaveBiosSettings -EA Stop | Out-Null
+                    Log "Lenovo BIOS: $_"
+                } else { Log "Lenovo BIOS: $_ already set" }
+            }
+        } elseif (-not $biosPasswordLock) {
             'RecoveryBoot=Enable', 'BootToCloud=Enable' | ForEach-Object {
                 $n = $_.Split('=')[0]
                 $cur = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like '$n%'" -EA 0
@@ -106,7 +156,8 @@ switch ($oem) {
 
 }
 
-if ($biosPasswordLock) { Log "BIOS admin password detected — BIOS settings locked. Skipping BIOS config. WinRE configured above." }
+# Clear password from memory
+Remove-Variable BiosPassword -Force -EA 0
 
 Log 'Done'
 exit 0

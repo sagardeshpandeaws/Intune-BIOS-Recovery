@@ -70,15 +70,16 @@ IntuneWinAppUtil.exe -c "Phase2-Win32-App-Deploy" -s "Install-OEMRecoveryTool.ps
 ### Phase 3 logic
 
 ```
-Detect.ps1                       Remediate.ps1
-┌───────────────────────┐        ┌──────────────────────────────┐
-│ App installed?        │        │ App missing?   → exit 1      │
-│ WinRE enabled?        │        │ App installed:               │
-│ Both yes → exit 0     │        │  Enable WinRE                │
-│ Either no → exit 1    │        │  Enable BIOS with modules    │
-└───────────────────────┘        │  (deployed by Phase 2)       │
-                                 │  Exit 0                      │
-                                 └──────────────────────────────┘
+Detect.ps1 (no password needed)    Remediate.ps1
+┌───────────────────────┐         ┌──────────────────────────────────┐
+│ App installed?        │         │ App missing?          → exit 1   │
+│ WinRE enabled?        │         │ App installed:                   │
+│ Both yes → exit 0     │         │  Enable WinRE                    │
+│ Either no → exit 1    │         │  Enable BIOS settings:           │
+└───────────────────────┘         │   No password + locked → log skip│
+                                  │   Password provided → apply      │
+                                  │  Exit 0                          │
+                                  └──────────────────────────────────┘
 ```
 
 | OEM | App deployed (Phase 2) | Module deployed (Phase 2) | BIOS settings applied |
@@ -116,15 +117,35 @@ Intune BIOS Setup\
 
 ## BIOS Password Handling
 
-If a BIOS admin password is deployed, Phase 3 detects it and **skips BIOS settings gracefully**:
+If a BIOS admin password is deployed, pass it to Phase 3 so BIOS settings are applied:
 
-| OEM | Detection method | Behavior |
-|-----|-----------------|----------|
-| Dell | `IsAdminPasswordSet` via DellBIOSProvider | Logs warning, skips BIOS config |
-| HP | `Setup Password` via HP.ClientManagement | Logs warning, skips BIOS config |
-| Lenovo | `IsAdminPasswordSet` via WMI | Logs warning, skips BIOS config |
+### Option A — Registry key (recommended for Proactive Remediation)
 
-**WinRE is still enabled.** OS corruption recovery (WinRE + cloud recovery boot) remains functional — only programmatic BIOS setting changes are blocked. No password is ever stored, passed, or embedded in the scripts.
+Deploy a registry key via Intune **Configuration Profile** (OMA-URI) or a separate script:
+
+```
+Path:   HKLM\SOFTWARE\IntuneBIOSRecovery
+Value:  BiosPassword (REG_SZ)
+```
+
+The script reads this automatically when `-BiosPassword` is not passed.
+
+### Option B — Script parameter (for Win32 App)
+
+```
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "Remediate.ps1" -BiosPassword "YourPassword"
+```
+
+### Security
+
+- Password is used **only in-memory** — never written to logs
+- Variable is cleared (`Remove-Variable`) immediately after use
+- Registry key should be restricted to SYSTEM (default for HKLM)
+- The password is a shared fleet secret, same as any enterprise BIOS management tool
+
+### If no password is provided
+
+Script detects the lock, logs a clear warning, skips BIOS config. **WinRE is still enabled.**
 
 ## Requirements
 
