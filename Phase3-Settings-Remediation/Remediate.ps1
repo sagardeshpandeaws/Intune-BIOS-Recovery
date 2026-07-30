@@ -43,6 +43,8 @@ if (($output -join '') -match 'Windows RE status.*Enabled') {
 }
 
 # ── BIOS settings (modules deployed by Phase 2) ──
+$biosPasswordLock = $false
+
 switch ($oem) {
 
     'Dell' {
@@ -50,13 +52,17 @@ switch ($oem) {
             Log 'DellBIOSProvider not found — skipping BIOS config. Check Phase 2 deployment.'
         } else {
             Import-Module DellBIOSProvider -Force -EA Stop
-            'SupportAssistSystemResolution\BiosConnect', 'SupportAssistSystemResolution\SupportAssistOSRecovery' | ForEach-Object {
-                $fp = "DellSmbios:\$_"
-                $cur = Get-Item $fp -EA Stop
-                if ($cur.CurrentValue -ne 'Enabled') {
-                    Set-Item $fp -Value 'Enabled' -EA Stop
-                    Log "Dell BIOS: $_ = Enabled"
-                } else { Log "Dell BIOS: $_ already Enabled" }
+            $pwSet = Get-Item 'DellSmbios:\Security\IsAdminPasswordSet' -EA 0
+            if ($pwSet -and $pwSet.CurrentValue -eq 'Yes') { $biosPasswordLock = $true }
+            if (-not $biosPasswordLock) {
+                'SupportAssistSystemResolution\BiosConnect', 'SupportAssistSystemResolution\SupportAssistOSRecovery' | ForEach-Object {
+                    $fp = "DellSmbios:\$_"
+                    $cur = Get-Item $fp -EA Stop
+                    if ($cur.CurrentValue -ne 'Enabled') {
+                        Set-Item $fp -Value 'Enabled' -EA Stop
+                        Log "Dell BIOS: $_ = Enabled"
+                    } else { Log "Dell BIOS: $_ already Enabled" }
+                }
             }
         }
     }
@@ -66,29 +72,41 @@ switch ($oem) {
             Log 'HP.ClientManagement not found — skipping BIOS config. Check Phase 2 deployment.'
         } else {
             Import-Module HP.ClientManagement -Force -EA Stop
-            'HP Cloud Recovery', 'Recovery Manager Boot' | ForEach-Object {
-                $cur = Get-HPBIOSSetting -Name $_ -EA Stop
-                if ($cur.Value -ne 'Enabled') {
-                    Set-HPBIOSSetting -Name $_ -Value 'Enabled' -EA Stop
-                    Log "HP BIOS: $_ = Enabled"
-                } else { Log "HP BIOS: $_ already Enabled" }
+            try {
+                $pwSet = Get-HPBIOSSetting -Name 'Setup Password' -EA Stop
+                if ($pwSet.Value -eq 'Set') { $biosPasswordLock = $true }
+            } catch { $biosPasswordLock = $false }
+            if (-not $biosPasswordLock) {
+                'HP Cloud Recovery', 'Recovery Manager Boot' | ForEach-Object {
+                    $cur = Get-HPBIOSSetting -Name $_ -EA Stop
+                    if ($cur.Value -ne 'Enabled') {
+                        Set-HPBIOSSetting -Name $_ -Value 'Enabled' -EA Stop
+                        Log "HP BIOS: $_ = Enabled"
+                    } else { Log "HP BIOS: $_ already Enabled" }
+                }
             }
         }
     }
 
     'Lenovo' {
-        'RecoveryBoot=Enable', 'BootToCloud=Enable' | ForEach-Object {
-            $n = $_.Split('=')[0]
-            $cur = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like '$n%'" -EA 0
-            if (-not $cur -or $cur.CurrentSetting -ne $_) {
-                Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SetBiosSetting -Arguments @{ Setting = $_ } -EA Stop | Out-Null
-                Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SaveBiosSettings -EA Stop | Out-Null
-                Log "Lenovo BIOS: $_"
-            } else { Log "Lenovo BIOS: $_ already set" }
+        $pwSet = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like 'IsAdminPasswordSet%'" -EA 0
+        if ($pwSet -and $pwSet.CurrentSetting -match 'IsAdminPasswordSet=Yes') { $biosPasswordLock = $true }
+        if (-not $biosPasswordLock) {
+            'RecoveryBoot=Enable', 'BootToCloud=Enable' | ForEach-Object {
+                $n = $_.Split('=')[0]
+                $cur = Get-CimInstance -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -Filter "CurrentSetting like '$n%'" -EA 0
+                if (-not $cur -or $cur.CurrentSetting -ne $_) {
+                    Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SetBiosSetting -Arguments @{ Setting = $_ } -EA Stop | Out-Null
+                    Invoke-CimMethod -Namespace 'root\wmi' -ClassName Lenovo_BiosSetting -MethodName SaveBiosSettings -EA Stop | Out-Null
+                    Log "Lenovo BIOS: $_"
+                } else { Log "Lenovo BIOS: $_ already set" }
+            }
         }
     }
 
 }
+
+if ($biosPasswordLock) { Log "BIOS admin password detected — BIOS settings locked. Skipping BIOS config. WinRE configured above." }
 
 Log 'Done'
 exit 0

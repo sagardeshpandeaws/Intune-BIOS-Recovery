@@ -114,6 +114,18 @@ Intune BIOS Setup\
     └── Remediate.ps1                    Proactive Remediation — remediation script
 ```
 
+## BIOS Password Handling
+
+If a BIOS admin password is deployed, Phase 3 detects it and **skips BIOS settings gracefully**:
+
+| OEM | Detection method | Behavior |
+|-----|-----------------|----------|
+| Dell | `IsAdminPasswordSet` via DellBIOSProvider | Logs warning, skips BIOS config |
+| HP | `Setup Password` via HP.ClientManagement | Logs warning, skips BIOS config |
+| Lenovo | `IsAdminPasswordSet` via WMI | Logs warning, skips BIOS config |
+
+**WinRE is still enabled.** OS corruption recovery (WinRE + cloud recovery boot) remains functional — only programmatic BIOS setting changes are blocked. No password is ever stored, passed, or embedded in the scripts.
+
 ## Requirements
 
 - Windows 10/11 1809+
