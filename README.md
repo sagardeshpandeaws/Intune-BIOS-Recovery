@@ -115,37 +115,21 @@ Intune BIOS Setup\
     └── Remediate.ps1                    Proactive Remediation — remediation script
 ```
 
-## BIOS Password Handling
+## BIOS Password
 
-If a BIOS admin password is deployed, pass it to Phase 3 so BIOS settings are applied:
+If a BIOS admin password is deployed on your fleet, pass it via:
 
-### Option A — Registry key (recommended for Proactive Remediation)
-
-Deploy a registry key via Intune **Configuration Profile** (OMA-URI) or a separate script:
-
+**Registry key** (recommended for Proactive Remediation):
 ```
-Path:   HKLM\SOFTWARE\IntuneBIOSRecovery
-Value:  BiosPassword (REG_SZ)
+HKLM\SOFTWARE\IntuneBIOSRecovery\BiosPassword (REG_SZ)
 ```
 
-The script reads this automatically when `-BiosPassword` is not passed.
-
-### Option B — Script parameter (for Win32 App)
-
+**Script parameter** (for Win32 App):
 ```
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "Remediate.ps1" -BiosPassword "YourPassword"
+powershell.exe ... -BiosPassword "YourPassword"
 ```
 
-### Security
-
-- Password is used **only in-memory** — never written to logs
-- Variable is cleared (`Remove-Variable`) immediately after use
-- Registry key should be restricted to SYSTEM (default for HKLM)
-- The password is a shared fleet secret, same as any enterprise BIOS management tool
-
-### If no password is provided
-
-Script detects the lock, logs a clear warning, skips BIOS config. **WinRE is still enabled.**
+The script **always tries to apply BIOS settings** — with or without a password. If the password is wrong, the attempt fails and is logged. Password is used in-memory only and cleared after use. No skip logic.
 
 ## Requirements
 
