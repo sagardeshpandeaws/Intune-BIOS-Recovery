@@ -70,16 +70,18 @@ IntuneWinAppUtil.exe -c "Phase2-Win32-App-Deploy" -s "Install-OEMRecoveryTool.ps
 ### Phase 3 logic
 
 ```
-Detect.ps1 (no password needed)    Remediate.ps1
-┌───────────────────────┐         ┌──────────────────────────────────┐
-│ App installed?        │         │ App missing?          → exit 1   │
-│ WinRE enabled?        │         │ App installed:                   │
-│ Both yes → exit 0     │         │  Enable WinRE                    │
-│ Either no → exit 1    │         │  Enable BIOS settings:           │
-└───────────────────────┘         │   No password + locked → log skip│
-                                  │   Password provided → apply      │
-                                  │  Exit 0                          │
-                                  └──────────────────────────────────┘
+Detect.ps1                         Remediate.ps1
+┌───────────────────────┐          ┌──────────────────────────────────────┐
+│ App installed?        │          │ App missing?               → exit 1  │
+│ WinRE enabled?        │          │ App installed:                       │
+│ Both yes → exit 0     │          │  Enable WinRE                        │
+│ Either no → exit 1    │          │  Apply BIOS settings (always tries): │
+└───────────────────────┘          │   Password available → authenticate  │
+                                   │   No password      → try without     │
+                                   │   Either way       → apply settings  │
+                                   │  Password cleared from memory        │
+                                   │  Exit 0                              │
+                                   └──────────────────────────────────────┘
 ```
 
 | OEM | App deployed (Phase 2) | Module deployed (Phase 2) | BIOS settings applied |
